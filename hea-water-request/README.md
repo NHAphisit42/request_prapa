@@ -42,7 +42,11 @@ lib/
 1. **สร้าง SharePoint List** ชื่อ เช่น `WaterRequests` พร้อมคอลัมน์:
    `Title`(ชื่อ-นามสกุล), `NationalID`, `Phone`, `Email`, `Province`, `District`,
    `Subdistrict`, `PWABranch`, `AddressDetail`, `Latitude`(Number), `Longitude`(Number),
+   `AttachmentUrls`(Multiple lines of text — ลิงก์ไฟล์แนบ คั่นด้วยขึ้นบรรทัดใหม่),
    `SubmittedAt`(Date), `Status`(Choice: New/In Review/Approved/Rejected)
+   - ไฟล์แนบ (สำเนาบัตร ปชช./ทะเบียนบ้าน) จะถูกอัปโหลดไปที่ document library เริ่มต้นของไซต์
+     ในโฟลเดอร์ `WaterRequests/<เลขที่คำร้อง>/` แล้วบันทึกลิงก์ไว้ในคอลัมน์ `AttachmentUrls`
+     (ไฟล์ละไม่เกิน 10MB, สูงสุด 10 ไฟล์ต่อคำร้อง)
 2. **ลงทะเบียนแอปใน Entra ID (Azure AD)** → App registrations → New registration
    - เพิ่ม API permission: `Sites.ReadWrite.All` (Application, ไม่ใช่ Delegated) แล้วกด Grant admin consent
    - สร้าง Client secret เก็บไว้
@@ -50,20 +54,24 @@ lib/
 4. Deploy ขึ้น hosting ที่รัน Node server ได้ (Vercel / Azure App Service / IIS+Node) —
    **ห้าม** deploy เป็น static export เพราะ API route ต้องมี server runtime
 
+## ขอบเขตการใช้งาน
+
+แอปนี้ให้บริการเฉพาะ**จังหวัดภูเก็ต** — ช่อง "จังหวัด" ถูกล็อกไว้ที่ภูเก็ต และ "กปภ.สาขา"
+แสดงเฉพาะ กปภ.สาขาภูเก็ต (สาขาเดียวที่ดูแลทั้งจังหวัด ตามข้อมูลจาก pwa.co.th) ผู้ใช้เลือกได้แค่
+อำเภอ/ตำบลภายในจังหวัดภูเก็ตเท่านั้น (`lib/thai-address.ts`)
+
 ## ข้อจำกัดที่ตั้งใจไว้ (ต้องทำต่อก่อนขึ้นจริง)
 
-- ยังไม่มีการอัปโหลดเอกสารแนบ (สำเนาบัตร ปชช., ทะเบียนบ้าน) — ดูข้อเสนอแนะด้านล่าง
 - ยังไม่มีระบบยืนยันตัวตนผู้ยื่นคำขอ (OTP/อีเมลยืนยัน)
-- `PWA_BRANCHES` ใน `lib/thai-address.ts` ยังเป็นรายชื่อตัวอย่าง — ควรแทนด้วยรายชื่อ กปภ.สาขาจริงทั้งหมด และถ้าเป็นไปได้ให้ผูกกับจังหวัด/อำเภอ เพื่อกรอง dropdown อัตโนมัติ
 
 ## ข้อเสนอแนะเพิ่มเติม
 
 ดูคำตอบในแชทสำหรับรายละเอียด — สรุปสั้น ๆ:
 
-1. อัปโหลดเอกสารแนบ (สำเนาบัตร ปชช./ทะเบียนบ้าน) → เก็บใน SharePoint document library ที่ผูกกับ List item
+1. ~~อัปโหลดเอกสารแนบ~~ ✅ ทำแล้ว — ไฟล์ไปที่ document library โฟลเดอร์ `WaterRequests/<เลขที่คำร้อง>/` ลิงก์เก็บใน `AttachmentUrls`
 2. ยืนยันตัวตนก่อนส่งฟอร์ม (OTP ทาง SMS หรือ magic link ทางอีเมล) กันสแปม/ข้อมูลปลอม
 3. ระบบติดตามสถานะคำขอ (เลขที่คำขอ + หน้าค้นหาสถานะ) ให้ผู้ยื่นกลับมาเช็คได้
 4. อีเมล/LINE Notify แจ้งเจ้าหน้าที่ทันทีที่มีคำขอใหม่ (Power Automate เชื่อมกับ SharePoint list ง่ายที่สุด)
-5. Validate เลขบัตร ปชช. ด้วย checksum จริง (ตอนนี้เช็คแค่ความยาว 13 หลัก)
+5. ~~Validate เลขบัตร ปชช. ด้วย checksum จริง~~ ✅ ทำแล้ว — `lib/national-id.ts` (mod-11 checksum, ทั้ง client และ server)
 6. reCAPTCHA / rate limiting บน API route กันบอทยิงฟอร์ม
 7. Audit log และสิทธิ์เจ้าหน้าที่ (Power Apps หรือหน้า admin แยก) สำหรับตรวจ/อนุมัติคำขอ

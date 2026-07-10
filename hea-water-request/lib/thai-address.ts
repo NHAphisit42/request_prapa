@@ -11,14 +11,9 @@ export type Province = { name: string; districts: District[] };
 
 export const THAI_ADDRESS: Province[] = raw as Province[];
 
-// กปภ.สาขา — Provincial Waterworks Authority branch offices.
-// This is NOT part of the province/district dataset above (PWA branch coverage areas
-// don't map 1:1 to provinces). Replace with your organization's real branch list —
-// ideally keyed by province/district so the dropdown can filter automatically.
-export const PWA_BRANCHES = [
-  "กปภ.สาขาสมุทรปราการ",
-  "กปภ.สาขาปากน้ำ",
-  "กปภ.สาขานนทบุรี",
-  "กปภ.สาขาบางบัวทอง",
-  "กปภ.สาขาปทุมธานี",
-];
+// This deployment only serves Phuket — the form locks the province field to this value.
+export const PHUKET_PROVINCE_NAME = "ภูเก็ต";
+
+// กปภ.สาขา — Provincial Waterworks Authority branch office(s) covering Phuket province.
+// PWA operates a single branch for the whole province (source: pwa.co.th/province/pid/83).
+export const PWA_BRANCHES = ["กปภ.สาขาภูเก็ต"];

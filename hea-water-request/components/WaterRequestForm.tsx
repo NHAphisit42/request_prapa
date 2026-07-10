@@ -2,8 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
-import { THAI_ADDRESS, PWA_BRANCHES } from "@/lib/thai-address";
+import { THAI_ADDRESS, PWA_BRANCHES, PHUKET_PROVINCE_NAME } from "@/lib/thai-address";
+import { isValidThaiNationalId } from "@/lib/national-id";
 import { getLiffProfile } from "@/lib/liff";
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB per file — keep well under Graph's simple-upload ceiling
 
 // Leaflet touches `window`, so the map must be client-only with SSR disabled.
 const LocationMap = dynamic(
@@ -74,11 +77,12 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
   const [email, setEmail] = useState("");
   const [lineId, setLineId] = useState("");
 
-  // Cascading address
-  const [provinceName, setProvinceName] = useState("");
+  // Cascading address — this deployment only serves Phuket, so province (and the
+  // single PWA branch that covers it) are locked instead of user-selectable.
+  const provinceName = PHUKET_PROVINCE_NAME;
   const [districtName, setDistrictName] = useState("");
   const [subdistrictName, setSubdistrictName] = useState("");
-  const [branch, setBranch] = useState("");
+  const [branch, setBranch] = useState(PWA_BRANCHES[0]);
   const [addressDetail, setAddressDetail] = useState("");
 
   // Installation details
@@ -94,6 +98,7 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
   // Documents
   const [checkedDocs, setCheckedDocs] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState("");
 
   // Map
   const [point, setPoint] = useState<LatLng | null>(null);
@@ -129,15 +134,22 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
     [province, districtName]
   );
 
+  // Juristic registration numbers use a different checksum than personal national IDs,
+  // so only enforce the mod-11 check for individual applicants.
+  const nationalIdValid =
+    applicantType === "juristic"
+      ? /^\d{13}$/.test(nationalId)
+      : isValidThaiNationalId(nationalId);
+
   const isValid =
     fullName.trim() &&
-    nationalId.trim().length === 13 &&
+    nationalIdValid &&
     phone.trim() &&
-    provinceName &&
     districtName &&
     subdistrictName &&
     branch &&
-    point;
+    point &&
+    !fileError;
 
   function toggleDoc(doc: string) {
     setCheckedDocs((prev) =>
@@ -152,31 +164,38 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
     setErrorMsg("");
 
     try {
+      const payload = {
+        fullName,
+        applicantType,
+        nationalId,
+        phone,
+        email,
+        lineId,
+        province: provinceName,
+        district: districtName,
+        subdistrict: subdistrictName,
+        branch,
+        addressDetail,
+        installationType,
+        meterSize: meterSize === "other" ? meterSizeOther : meterSize,
+        nearbyPlace,
+        customerType: customerType === "อื่นๆ" ? customerTypeOther : customerType,
+        documents: checkedDocs,
+        latitude: point?.lat,
+        longitude: point?.lng,
+        lineUserId,
+        lineDisplayName,
+      };
+
+      // multipart/form-data so attached files ride along with the JSON payload —
+      // do NOT set a Content-Type header, the browser fills in the multipart boundary.
+      const formData = new FormData();
+      formData.append("payload", JSON.stringify(payload));
+      attachedFiles.forEach((f) => formData.append("files", f, f.name));
+
       const res = await fetch("/api/submit-request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fullName,
-          applicantType,
-          nationalId,
-          phone,
-          email,
-          lineId,
-          province: provinceName,
-          district: districtName,
-          subdistrict: subdistrictName,
-          branch,
-          addressDetail,
-          installationType,
-          meterSize: meterSize === "other" ? meterSizeOther : meterSize,
-          nearbyPlace,
-          customerType: customerType === "อื่นๆ" ? customerTypeOther : customerType,
-          documents: checkedDocs,
-          latitude: point?.lat,
-          longitude: point?.lng,
-          lineUserId,
-          lineDisplayName,
-        }),
+        body: formData,
       });
 
       if (!res.ok) throw new Error((await res.json()).message ?? "ส่งคำขอไม่สำเร็จ");
@@ -270,6 +289,11 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
               placeholder="13 หลัก"
               inputMode="numeric"
             />
+            {applicantType === "individual" && nationalId.length === 13 && !nationalIdValid && (
+              <p className="mt-1 text-xs text-rose-600">
+                เลขบัตรประชาชนไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง
+              </p>
+            )}
           </Field>
           <Field label="เบอร์โทรศัพท์" required>
             <input
@@ -306,20 +330,7 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
 
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
           <Field label="จังหวัด" required>
-            <select
-              className="field-select"
-              value={provinceName}
-              onChange={(e) => {
-                setProvinceName(e.target.value);
-                setDistrictName("");
-                setSubdistrictName("");
-              }}
-            >
-              <option value="">กรุณาเลือก...</option>
-              {THAI_ADDRESS.map((p) => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
+            <input className="field-input bg-slate-50" value={provinceName} disabled readOnly />
           </Field>
           <Field label="อำเภอ/เขต" required>
             <select
@@ -354,16 +365,20 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
 
         <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           <Field label="กปภ.สาขา" required>
-            <select
-              className="field-select"
-              value={branch}
-              onChange={(e) => setBranch(e.target.value)}
-            >
-              <option value="">กรุณาเลือก...</option>
-              {PWA_BRANCHES.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
+            {PWA_BRANCHES.length > 1 ? (
+              <select
+                className="field-select"
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+              >
+                <option value="">กรุณาเลือก...</option>
+                {PWA_BRANCHES.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            ) : (
+              <input className="field-input bg-slate-50" value={branch} disabled readOnly />
+            )}
           </Field>
           <div className="sm:col-span-2">
             <Field label="ที่อยู่ (บ้านเลขที่ / หมู่ / ซอย / ถนน)">
@@ -493,9 +508,22 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
             type="file"
             multiple
             accept="image/*,application/pdf"
-            onChange={(e) => setAttachedFiles(Array.from(e.target.files ?? []))}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              const tooBig = files.find((f) => f.size > MAX_FILE_SIZE);
+              if (tooBig) {
+                setFileError(`ไฟล์ "${tooBig.name}" มีขนาดเกิน 10MB กรุณาเลือกไฟล์ใหม่`);
+                setAttachedFiles([]);
+                e.target.value = "";
+                return;
+              }
+              setFileError("");
+              setAttachedFiles(files);
+            }}
             className="mt-2 block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-aqua/50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-navy-deep hover:file:bg-aqua/70"
           />
+          <p className="mt-1 text-xs text-slate-400">ไฟล์ละไม่เกิน 10MB</p>
+          {fileError && <p className="mt-1 text-xs text-rose-600">{fileError}</p>}
           {attachedFiles.length > 0 && (
             <ul className="mt-2 list-inside list-disc text-xs text-slate-500">
               {attachedFiles.map((f) => (

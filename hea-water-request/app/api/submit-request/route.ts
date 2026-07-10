@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ConfidentialClientApplication } from "@azure/msal-node";
+import { isValidThaiNationalId } from "@/lib/national-id";
+
+const MAX_FILES = 10;
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB — well under Graph's 250MB simple-upload ceiling
 
 // ---- Required environment variables (see .env.example) -------------------
 // AZURE_TENANT_ID        Entra ID tenant that owns the SharePoint site
@@ -113,7 +117,13 @@ async function getNextRequestNo(
 
 function validate(body: Partial<RequestBody>): string | null {
   if (!body.fullName?.trim()) return "กรุณาระบุชื่อ-นามสกุล";
-  if (!body.nationalId || body.nationalId.length !== 13) return "เลขบัตรประชาชนไม่ถูกต้อง";
+  // Juristic registration numbers use a different checksum than personal national IDs,
+  // so only enforce the mod-11 check for individual applicants.
+  if (body.applicantType === "juristic") {
+    if (!/^\d{13}$/.test(body.nationalId ?? "")) return "เลขนิติบุคคลไม่ถูกต้อง";
+  } else if (!isValidThaiNationalId(body.nationalId ?? "")) {
+    return "เลขบัตรประชาชนไม่ถูกต้อง";
+  }
   if (!body.phone?.trim()) return "กรุณาระบุเบอร์โทรศัพท์";
   if (!body.province || !body.district || !body.subdistrict) return "กรุณาเลือกที่อยู่ให้ครบถ้วน";
   if (!body.branch) return "กรุณาเลือก กปภ.สาขา";
@@ -123,10 +133,48 @@ function validate(body: Partial<RequestBody>): string | null {
   return null;
 }
 
+// SharePoint/OneDrive item names can't contain these characters.
+function sanitizeFileName(name: string): string {
+  return name.replace(/[~"#%&*:<>?/\\{|}]/g, "_").slice(0, 180) || "file";
+}
+
+// Uploads one file into a per-request folder in the site's default document library
+// and returns its webUrl, to be saved on the list item as a plain-text link.
+async function uploadAttachment(
+  token: string,
+  siteId: string,
+  requestNo: string,
+  file: File
+): Promise<string> {
+  const path = `WaterRequests/${requestNo}/${sanitizeFileName(file.name)}`;
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${encodeURI(path)}:/content`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: await file.arrayBuffer(),
+    }
+  );
+  if (!res.ok) {
+    console.error("uploadAttachment failed:", file.name, res.status, await res.text());
+    throw new Error(`อัปโหลดไฟล์ "${file.name}" ไม่สำเร็จ`);
+  }
+  const data = await res.json();
+  return data.webUrl as string;
+}
+
 export async function POST(req: NextRequest) {
   let body: Partial<RequestBody>;
+  let files: File[] = [];
   try {
-    body = await req.json();
+    const formData = await req.formData();
+    const payloadRaw = formData.get("payload");
+    if (typeof payloadRaw !== "string") throw new Error("missing payload");
+    body = JSON.parse(payloadRaw);
+    files = formData.getAll("files").filter((f): f is File => f instanceof File);
   } catch {
     return NextResponse.json({ message: "รูปแบบข้อมูลไม่ถูกต้อง" }, { status: 400 });
   }
@@ -134,6 +182,17 @@ export async function POST(req: NextRequest) {
   const validationError = validate(body);
   if (validationError) {
     return NextResponse.json({ message: validationError }, { status: 400 });
+  }
+
+  if (files.length > MAX_FILES) {
+    return NextResponse.json({ message: `แนบไฟล์ได้ไม่เกิน ${MAX_FILES} ไฟล์` }, { status: 400 });
+  }
+  const oversized = files.find((f) => f.size > MAX_FILE_SIZE);
+  if (oversized) {
+    return NextResponse.json(
+      { message: `ไฟล์ "${oversized.name}" มีขนาดเกิน 10MB` },
+      { status: 400 }
+    );
   }
 
   const { SHAREPOINT_SITE_ID, SHAREPOINT_LIST_ID } = process.env;
@@ -147,6 +206,21 @@ export async function POST(req: NextRequest) {
   try {
     const token = await getGraphToken();
     const requestNo = await getNextRequestNo(token, SHAREPOINT_SITE_ID, SHAREPOINT_LIST_ID);
+
+    let attachmentUrls: string[] = [];
+    if (files.length > 0) {
+      try {
+        attachmentUrls = await Promise.all(
+          files.map((f) => uploadAttachment(token, SHAREPOINT_SITE_ID, requestNo, f))
+        );
+      } catch (err) {
+        console.error("attachment upload error:", err);
+        return NextResponse.json(
+          { message: err instanceof Error ? err.message : "อัปโหลดไฟล์แนบไม่สำเร็จ" },
+          { status: 502 }
+        );
+      }
+    }
 
     const graphRes = await fetch(
       `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_SITE_ID}/lists/${SHAREPOINT_LIST_ID}/items`,
@@ -178,6 +252,7 @@ export async function POST(req: NextRequest) {
             NearbyPlace: body.nearbyPlace ?? "",
             CustomerType: body.customerType ?? "",
             Documents: (body.documents ?? []).join(", "),
+            AttachmentUrls: attachmentUrls.join("\n"),
             Latitude: body.latitude,
             Longitude: body.longitude,
             LineUserId: body.lineUserId ?? "",
