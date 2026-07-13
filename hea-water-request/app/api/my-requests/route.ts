@@ -1,43 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ConfidentialClientApplication } from "@azure/msal-node";
+import { getGraphToken } from "@/lib/graph-auth";
 
 // Returns the submitted water-service requests belonging to a given LINE user.
 // Query string: /api/my-requests?lineUserId=<line user id>
 
 export const dynamic = "force-dynamic";
-
-let cachedToken: { token: string; expiresAt: number } | null = null;
-
-function getMsalClient() {
-  const { AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET } = process.env;
-  if (!AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRET) {
-    throw new Error("Missing Azure AD app credentials in environment variables.");
-  }
-  return new ConfidentialClientApplication({
-    auth: {
-      clientId: AZURE_CLIENT_ID,
-      authority: `https://login.microsoftonline.com/${AZURE_TENANT_ID}`,
-      clientSecret: AZURE_CLIENT_SECRET,
-    },
-  });
-}
-
-async function getGraphToken(): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now()) {
-    return cachedToken.token;
-  }
-  const app = getMsalClient();
-  const result = await app.acquireTokenByClientCredential({
-    scopes: ["https://graph.microsoft.com/.default"],
-  });
-  if (!result?.accessToken) throw new Error("Failed to acquire Graph token.");
-
-  cachedToken = {
-    token: result.accessToken,
-    expiresAt: result.expiresOn ? result.expiresOn.getTime() - 60_000 : Date.now() + 55 * 60_000,
-  };
-  return result.accessToken;
-}
 
 export async function GET(req: NextRequest) {
   const lineUserId = req.nextUrl.searchParams.get("lineUserId");

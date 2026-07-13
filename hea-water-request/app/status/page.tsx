@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getLiffProfile } from "@/lib/liff";
+import { STATUS_LABEL_TH, STATUS_STYLES } from "@/lib/request-status";
 
 type RequestItem = {
   id: string;
@@ -12,20 +13,6 @@ type RequestItem = {
   installationType: string;
   status: string;
   submittedAt: string;
-};
-
-const STATUS_LABEL_TH: Record<string, string> = {
-  New: "รอดำเนินการ",
-  "In Progress": "กำลังดำเนินการ",
-  Completed: "เสร็จสมบูรณ์",
-  Rejected: "ปฏิเสธ",
-};
-
-const STATUS_STYLES: Record<string, string> = {
-  New: "bg-aqua/50 text-navy-deep",
-  "In Progress": "bg-navy/10 text-navy",
-  Completed: "bg-sage/50 text-sage-olive",
-  Rejected: "bg-rose-100 text-rose-600",
 };
 
 type LoadState = "loading" | "ready" | "error";

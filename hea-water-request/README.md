@@ -74,4 +74,4 @@ lib/
 4. อีเมล/LINE Notify แจ้งเจ้าหน้าที่ทันทีที่มีคำขอใหม่ (Power Automate เชื่อมกับ SharePoint list ง่ายที่สุด)
 5. ~~Validate เลขบัตร ปชช. ด้วย checksum จริง~~ ✅ ทำแล้ว — `lib/national-id.ts` (mod-11 checksum, ทั้ง client และ server)
 6. reCAPTCHA / rate limiting บน API route กันบอทยิงฟอร์ม
-7. Audit log และสิทธิ์เจ้าหน้าที่ (Power Apps หรือหน้า admin แยก) สำหรับตรวจ/อนุมัติคำขอ
+7. ~~สิทธิ์เจ้าหน้าที่ (หน้า admin แยก)~~ ✅ ทำแล้ว — หน้า `/admin` เช็คสิทธิ์ผ่าน list `AdminRoles` (`lib/admin-role.ts`) ดู/ค้นหา/เปลี่ยนสถานะคำร้องได้ (`app/admin/page.tsx`, `app/api/admin/requests/`) — ยังไม่มี audit log ว่าใครแก้อะไรเมื่อไหร่
