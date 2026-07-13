@@ -38,6 +38,20 @@ export default function AdminPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  // Returns "forbidden" if the caller isn't in the AdminRoles list, otherwise the
+  // authoritative item list from the server. Shared by the initial load and by
+  // changeStatus's re-sync after a failed update.
+  async function fetchItems(uid: string): Promise<AdminRequestItem[] | "forbidden"> {
+    const res = await fetch(`/api/admin/requests?lineUserId=${encodeURIComponent(uid)}`);
+    if (res.status === 403) return "forbidden";
+    if (!res.ok) {
+      const b = await res.json().catch(() => null);
+      throw new Error(b?.message ?? "โหลดข้อมูลไม่สำเร็จ");
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
   useEffect(() => {
     async function run() {
       try {
@@ -50,17 +64,12 @@ export default function AdminPage() {
         setLineUserId(profile.userId);
         setDisplayName(profile.displayName);
 
-        const res = await fetch(`/api/admin/requests?lineUserId=${encodeURIComponent(profile.userId)}`);
-        if (res.status === 403) {
+        const result = await fetchItems(profile.userId);
+        if (result === "forbidden") {
           setLoadState("forbidden");
           return;
         }
-        if (!res.ok) {
-          const b = await res.json().catch(() => null);
-          throw new Error(b?.message ?? "โหลดข้อมูลไม่สำเร็จ");
-        }
-        const data = await res.json();
-        setItems(data.items ?? []);
+        setItems(result);
         setLoadState("ready");
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : "เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง");
@@ -86,7 +95,6 @@ export default function AdminPage() {
   }, [items, search, statusFilter]);
 
   async function changeStatus(id: string, status: string) {
-    const prev = items;
     setSavingId(id);
     setItems((cur) => cur.map((it) => (it.id === id ? { ...it, status } : it)));
     try {
@@ -100,8 +108,16 @@ export default function AdminPage() {
         throw new Error(b?.message ?? "อัปเดตสถานะไม่สำเร็จ");
       }
     } catch (err) {
-      setItems(prev); // roll back on failure
       alert(err instanceof Error ? err.message : "อัปเดตสถานะไม่สำเร็จ");
+      // The update may have actually reached the server even though this request
+      // failed/timed out client-side — re-sync with the server's real state
+      // instead of guessing at a rollback value.
+      try {
+        const fresh = await fetchItems(lineUserId);
+        if (fresh !== "forbidden") setItems(fresh);
+      } catch {
+        // Refetch failed too — leave the optimistic UI state as-is.
+      }
     } finally {
       setSavingId(null);
     }
