@@ -511,7 +511,7 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
                   return (
                     <label
                       key={opt}
-                      className={`flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
+                      className={`relative flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-navy has-[:focus-visible]:ring-offset-2 ${
                         checked
                           ? "border-navy bg-white font-medium text-navy-deep shadow-field"
                           : "border-transparent bg-white/60 text-slate-600 hover:border-slate-200 hover:bg-white"
@@ -522,7 +522,10 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
                         name="customerType"
                         checked={checked}
                         onChange={() => setCustomerType(opt)}
-                        className="sr-only"
+                        // Full-size + opacity-0 instead of sr-only: a near-zero-size focus
+                        // target makes mobile browsers auto-zoom to it on tap, which is what
+                        // caused the "screen freezes white" bug reported on the LINE in-app browser.
+                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                       />
                       <span
                         className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
