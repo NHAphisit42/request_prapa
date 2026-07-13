@@ -79,6 +79,37 @@ export default function AdminPage() {
     run();
   }, []);
 
+  // Next.js's client-side Router Cache (and mobile bfcache) can restore this page
+  // from a stale in-memory snapshot when the user navigates back to it — e.g. after
+  // checking /status and returning — without re-running the mount effect above.
+  // Re-sync with the server whenever the tab/page becomes visible again so the list
+  // never lags behind reality.
+  useEffect(() => {
+    if (!lineUserId || loadState !== "ready") return;
+
+    function refresh() {
+      fetchItems(lineUserId)
+        .then((result) => {
+          if (result !== "forbidden") setItems(result);
+        })
+        .catch(() => {
+          // Keep showing the last known list rather than erroring out on a background refresh.
+        });
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") refresh();
+    }
+    function onPageShow(e: PageTransitionEvent) {
+      if (e.persisted) refresh();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [lineUserId, loadState]);
+
   const filteredItems = useMemo(() => {
     const q = search.trim().toLowerCase();
     return items.filter((item) => {
