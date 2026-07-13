@@ -14,6 +14,14 @@ export const THAI_ADDRESS: Province[] = raw as Province[];
 // This deployment only serves Phuket — the form locks the province field to this value.
 export const PHUKET_PROVINCE_NAME = "ภูเก็ต";
 
+// This deployment only takes requests within Thalang district — the form locks
+// the อำเภอ/เขต field to this value instead of listing all of Phuket's districts.
+export const THALANG_DISTRICT_NAME = "ถลาง";
+
+// Within Thalang, only these two ตำบล/แขวง are currently served.
+export const ALLOWED_SUBDISTRICTS = ["สาคู", "ไม้ขาว"];
+
 // กปภ.สาขา — Provincial Waterworks Authority branch office(s) covering Phuket province.
 // PWA operates a single branch for the whole province (source: pwa.co.th/province/pid/83).
+// Not user-selectable — silently attached to every submission from this deployment.
 export const PWA_BRANCHES = ["กปภ.สาขาภูเก็ต"];

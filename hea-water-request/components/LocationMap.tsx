@@ -54,6 +54,8 @@ export function LocationMap({
   const [placing, setPlacing] = useState(false);
   const [latInput, setLatInput] = useState("");
   const [lngInput, setLngInput] = useState("");
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState("");
   const mapRef = useRef<L.Map | null>(null);
 
   const handlePick = (p: LatLng) => {
@@ -69,6 +71,26 @@ export function LocationMap({
     if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
       onChange({ lat, lng });
     }
+  };
+
+  const handleUseCurrentLocation = () => {
+    if (!("geolocation" in navigator)) {
+      setLocError("อุปกรณ์นี้ไม่รองรับการระบุตำแหน่งปัจจุบัน");
+      return;
+    }
+    setLocating(true);
+    setLocError("");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        handlePick({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocating(false);
+      },
+      () => {
+        setLocError("ไม่สามารถระบุตำแหน่งได้ กรุณาอนุญาตการเข้าถึงตำแหน่งของอุปกรณ์");
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
 
   return (
@@ -119,6 +141,15 @@ export function LocationMap({
         </button>
         <button
           type="button"
+          onClick={handleUseCurrentLocation}
+          disabled={locating}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-navy-deep shadow-field transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+        >
+          <span aria-hidden>📍</span>
+          {locating ? "กำลังค้นหาตำแหน่ง…" : "ใช้ตำแหน่งปัจจุบัน"}
+        </button>
+        <button
+          type="button"
           onClick={() => {
             onChange(null);
             setLatInput("");
@@ -128,9 +159,10 @@ export function LocationMap({
         >
           ล้างจุดติดตั้ง
         </button>
-        <p className="text-xs text-slate-500">
-          คลิกที่ปุ่ม “กำหนดจุดติดตั้ง” แล้วคลิกเลือกตำแหน่งบนแผนที่
+        <p className="w-full text-xs text-slate-500 sm:w-auto">
+          คลิกที่ปุ่ม “กำหนดจุดติดตั้ง” แล้วคลิกเลือกตำแหน่งบนแผนที่ หรือกด “ใช้ตำแหน่งปัจจุบัน”
         </p>
+        {locError && <p className="w-full text-xs text-rose-600">{locError}</p>}
       </div>
 
       <div className="overflow-hidden rounded-card border border-slate-200 shadow-soft">

@@ -21,7 +21,6 @@ type RequestBody = {
   nationalId: string;
   phone: string;
   email?: string;
-  lineId?: string;
   province: string;
   district: string;
   subdistrict: string;
@@ -241,7 +240,6 @@ export async function POST(req: NextRequest) {
             NationalId: body.nationalId,
             Phone: body.phone,
             Email: body.email ?? "",
-            LineId: body.lineId ?? "",
             Province: body.province,
             District: body.district,
             Subdistrict: body.subdistrict,

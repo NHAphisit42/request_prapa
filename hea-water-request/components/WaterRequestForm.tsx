@@ -1,8 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
-import { THAI_ADDRESS, PWA_BRANCHES, PHUKET_PROVINCE_NAME } from "@/lib/thai-address";
+import { useEffect, useRef, useState } from "react";
+import {
+  PHUKET_PROVINCE_NAME,
+  THALANG_DISTRICT_NAME,
+  ALLOWED_SUBDISTRICTS,
+  PWA_BRANCHES,
+} from "@/lib/thai-address";
 import { isValidThaiNationalId } from "@/lib/national-id";
 import { getLiffProfile } from "@/lib/liff";
 
@@ -37,13 +42,15 @@ const METER_SIZE_OPTIONS: { value: MeterSize; label: string }[] = [
   { value: "other", label: "อื่นๆ" },
 ];
 
-const CUSTOMER_TYPE_GROUPS: { title: string; options: string[] }[] = [
+const CUSTOMER_TYPE_GROUPS: { title: string; accent: string; options: string[] }[] = [
   {
     title: "ประเภทที่ 1",
+    accent: "bg-aqua/60 text-navy-deep",
     options: ["บ้านพักอาศัย", "อื่นๆ"],
   },
   {
     title: "ประเภทที่ 2",
+    accent: "bg-sage/60 text-sage-olive",
     options: [
       "ห้องเช่า/บ้านเช่า",
       "ที่ดินว่างเปล่า",
@@ -55,6 +62,7 @@ const CUSTOMER_TYPE_GROUPS: { title: string; options: string[] }[] = [
   },
   {
     title: "ประเภทที่ 3",
+    accent: "bg-navy/10 text-navy",
     options: ["ธุรกิจขนาดใหญ่", "โรงแรมขนาดใหญ่", "โรงงาน/อุตสาหกรรม", "บริษัท (มหาชน)", "อื่นๆ"],
   },
 ];
@@ -68,6 +76,14 @@ const DOCUMENT_CHECKLIST = [
   "หนังสือรับรองบริษัท",
 ];
 
+type FieldErrors = {
+  fullName?: string;
+  nationalId?: string;
+  phone?: string;
+  subdistrict?: string;
+  location?: string;
+};
+
 export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
   // Applicant
   const [fullName, setFullName] = useState("");
@@ -75,14 +91,13 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
   const [nationalId, setNationalId] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
-  const [lineId, setLineId] = useState("");
 
-  // Cascading address — this deployment only serves Phuket, so province (and the
-  // single PWA branch that covers it) are locked instead of user-selectable.
+  // Address — this deployment only serves Phuket / Thalang district, so province and
+  // district are locked instead of user-selectable. Only the two served ตำบล are offered.
   const provinceName = PHUKET_PROVINCE_NAME;
-  const [districtName, setDistrictName] = useState("");
+  const districtName = THALANG_DISTRICT_NAME;
+  const branch = PWA_BRANCHES[0]; // fixed, no longer user-selectable
   const [subdistrictName, setSubdistrictName] = useState("");
-  const [branch, setBranch] = useState(PWA_BRANCHES[0]);
   const [addressDetail, setAddressDetail] = useState("");
 
   // Installation details
@@ -95,9 +110,9 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
   const [customerType, setCustomerType] = useState("");
   const [customerTypeOther, setCustomerTypeOther] = useState("");
 
-  // Documents
+  // Documents — each ticked item gets its own file-attach slot.
   const [checkedDocs, setCheckedDocs] = useState<string[]>([]);
-  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [docFiles, setDocFiles] = useState<Record<string, File[]>>({});
   const [fileError, setFileError] = useState("");
 
   // Map
@@ -106,6 +121,8 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [requestNo, setRequestNo] = useState("");
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
 
   // LINE profile (silently captured via LIFF so we know who submitted the request)
   const [lineUserId, setLineUserId] = useState("");
@@ -125,15 +142,6 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
       });
   }, []);
 
-  const province = useMemo(
-    () => THAI_ADDRESS.find((p) => p.name === provinceName),
-    [provinceName]
-  );
-  const district = useMemo(
-    () => province?.districts.find((d) => d.name === districtName),
-    [province, districtName]
-  );
-
   // Juristic registration numbers use a different checksum than personal national IDs,
   // so only enforce the mod-11 check for individual applicants.
   const nationalIdValid =
@@ -141,24 +149,56 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
       ? /^\d{13}$/.test(nationalId)
       : isValidThaiNationalId(nationalId);
 
-  const isValid =
-    fullName.trim() &&
-    nationalIdValid &&
-    phone.trim() &&
-    districtName &&
-    subdistrictName &&
-    branch &&
-    point &&
-    !fileError;
+  const fieldErrors: FieldErrors = {};
+  if (!fullName.trim()) fieldErrors.fullName = "กรุณาระบุชื่อ-นามสกุล";
+  if (!nationalIdValid) {
+    fieldErrors.nationalId =
+      applicantType === "juristic"
+        ? "กรุณาระบุเลขนิติบุคคลให้ครบ 13 หลัก"
+        : "เลขบัตรประชาชนไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง";
+  }
+  if (!phone.trim()) fieldErrors.phone = "กรุณาระบุเบอร์โทรศัพท์";
+  if (!subdistrictName) fieldErrors.subdistrict = "กรุณาเลือกตำบล/แขวง";
+  if (!point) fieldErrors.location = "กรุณากำหนดตำแหน่งติดตั้งบนแผนที่";
+
+  const isValid = Object.keys(fieldErrors).length === 0 && !fileError;
+
+  useEffect(() => {
+    if (attemptedSubmit && Object.keys(fieldErrors).length > 0) {
+      errorSummaryRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    // Only scroll at the moment a submit attempt is made, not on every keystroke afterwards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attemptedSubmit]);
 
   function toggleDoc(doc: string) {
-    setCheckedDocs((prev) =>
-      prev.includes(doc) ? prev.filter((d) => d !== doc) : [...prev, doc]
-    );
+    setCheckedDocs((prev) => {
+      if (prev.includes(doc)) {
+        setDocFiles((files) => {
+          const next = { ...files };
+          delete next[doc];
+          return next;
+        });
+        return prev.filter((d) => d !== doc);
+      }
+      return [...prev, doc];
+    });
+  }
+
+  function handleDocFiles(doc: string, fileList: FileList | null) {
+    const files = Array.from(fileList ?? []);
+    const tooBig = files.find((f) => f.size > MAX_FILE_SIZE);
+    if (tooBig) {
+      setFileError(`ไฟล์ "${tooBig.name}" มีขนาดเกิน 10MB กรุณาเลือกไฟล์ใหม่`);
+      return;
+    }
+    setFileError("");
+    setDocFiles((prev) => ({ ...prev, [doc]: files }));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setAttemptedSubmit(true);
     if (!isValid) return;
     setStatus("submitting");
     setErrorMsg("");
@@ -170,7 +210,6 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
         nationalId,
         phone,
         email,
-        lineId,
         province: provinceName,
         district: districtName,
         subdistrict: subdistrictName,
@@ -186,6 +225,12 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
         lineUserId,
         lineDisplayName,
       };
+
+      // Prefix each file with its document label so the attachment is traceable
+      // back to the checklist item it belongs to once it lands in SharePoint.
+      const attachedFiles = checkedDocs.flatMap((doc) =>
+        (docFiles[doc] ?? []).map((f) => new File([f], `${doc} - ${f.name}`, { type: f.type }))
+      );
 
       // multipart/form-data so attached files ride along with the JSON payload —
       // do NOT set a Content-Type header, the browser fills in the multipart boundary.
@@ -243,6 +288,20 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
         <p>กรุณากรอกข้อมูลผู้ขอใช้บริการและตรวจสอบพื้นที่ที่ต้องการขอใช้น้ำ เพื่อความสะดวกในการรับบริการ</p>
       </div>
 
+      {attemptedSubmit && Object.keys(fieldErrors).length > 0 && (
+        <div
+          ref={errorSummaryRef}
+          className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-3.5 text-sm text-rose-700"
+        >
+          <p className="font-semibold">กรุณากรอกข้อมูลให้ครบถ้วนก่อนส่งคำขอ:</p>
+          <ul className="mt-1.5 list-inside list-disc space-y-0.5">
+            {Object.values(fieldErrors).map((msg, i) => (
+              <li key={i}>{msg}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {lineDisplayName && (
         <div className="flex items-center gap-2 rounded-xl bg-sage/30 px-4 py-2 text-xs font-medium text-sage-olive">
           <span>💬</span>
@@ -273,31 +332,44 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
         </div>
 
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-          <Field label="ชื่อ-นามสกุล" required>
+          <Field
+            label="ชื่อ-นามสกุล"
+            required
+            error={attemptedSubmit ? fieldErrors.fullName : undefined}
+          >
             <input
-              className="field-input"
+              className={`field-input ${
+                attemptedSubmit && fieldErrors.fullName ? "border-rose-400" : ""
+              }`}
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="เช่น สมชาย ใจดี"
             />
           </Field>
-          <Field label={applicantType === "juristic" ? "เลขนิติบุคคล" : "เลขบัตรประชาชน"} required>
+          <Field
+            label={applicantType === "juristic" ? "เลขนิติบุคคล" : "เลขบัตรประชาชน"}
+            required
+            error={
+              attemptedSubmit || nationalId.length === 13 ? fieldErrors.nationalId : undefined
+            }
+          >
             <input
-              className="field-input"
+              className={`field-input ${
+                (attemptedSubmit || nationalId.length === 13) && fieldErrors.nationalId
+                  ? "border-rose-400"
+                  : ""
+              }`}
               value={nationalId}
               onChange={(e) => setNationalId(e.target.value.replace(/\D/g, "").slice(0, 13))}
               placeholder="13 หลัก"
               inputMode="numeric"
             />
-            {applicantType === "individual" && nationalId.length === 13 && !nationalIdValid && (
-              <p className="mt-1 text-xs text-rose-600">
-                เลขบัตรประชาชนไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง
-              </p>
-            )}
           </Field>
-          <Field label="เบอร์โทรศัพท์" required>
+          <Field label="เบอร์โทรศัพท์" required error={attemptedSubmit ? fieldErrors.phone : undefined}>
             <input
-              className="field-input"
+              className={`field-input ${
+                attemptedSubmit && fieldErrors.phone ? "border-rose-400" : ""
+              }`}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="08X-XXX-XXXX"
@@ -313,14 +385,6 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
               placeholder="name@example.com"
             />
           </Field>
-          <Field label="LINE ID">
-            <input
-              className="field-input"
-              value={lineId}
-              onChange={(e) => setLineId(e.target.value)}
-              placeholder="เช่น @heawater"
-            />
-          </Field>
         </div>
       </section>
 
@@ -333,63 +397,37 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
             <input className="field-input bg-slate-50" value={provinceName} disabled readOnly />
           </Field>
           <Field label="อำเภอ/เขต" required>
-            <select
-              className="field-select"
-              value={districtName}
-              disabled={!province}
-              onChange={(e) => {
-                setDistrictName(e.target.value);
-                setSubdistrictName("");
-              }}
-            >
-              <option value="">กรุณาเลือก...</option>
-              {province?.districts.map((d) => (
-                <option key={d.name} value={d.name}>{d.name}</option>
-              ))}
-            </select>
+            <input className="field-input bg-slate-50" value={districtName} disabled readOnly />
           </Field>
-          <Field label="ตำบล/แขวง" required>
+          <Field
+            label="ตำบล/แขวง"
+            required
+            error={attemptedSubmit ? fieldErrors.subdistrict : undefined}
+          >
             <select
-              className="field-select"
+              className={`field-select ${
+                attemptedSubmit && fieldErrors.subdistrict ? "border-rose-400" : ""
+              }`}
               value={subdistrictName}
-              disabled={!district}
               onChange={(e) => setSubdistrictName(e.target.value)}
             >
               <option value="">กรุณาเลือก...</option>
-              {district?.subdistricts.map((s) => (
-                <option key={s.name} value={s.name}>{s.name}</option>
+              {ALLOWED_SUBDISTRICTS.map((s) => (
+                <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </Field>
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
-          <Field label="กปภ.สาขา" required>
-            {PWA_BRANCHES.length > 1 ? (
-              <select
-                className="field-select"
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-              >
-                <option value="">กรุณาเลือก...</option>
-                {PWA_BRANCHES.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
-            ) : (
-              <input className="field-input bg-slate-50" value={branch} disabled readOnly />
-            )}
+        <div className="mt-5">
+          <Field label="ที่อยู่ (บ้านเลขที่ / หมู่ / ซอย / ถนน)">
+            <input
+              className="field-input"
+              value={addressDetail}
+              onChange={(e) => setAddressDetail(e.target.value)}
+              placeholder="เช่น 123/45 หมู่ 6 ซอยสุขุมวิท 71"
+            />
           </Field>
-          <div className="sm:col-span-2">
-            <Field label="ที่อยู่ (บ้านเลขที่ / หมู่ / ซอย / ถนน)">
-              <input
-                className="field-input"
-                value={addressDetail}
-                onChange={(e) => setAddressDetail(e.target.value)}
-                placeholder="เช่น 123/45 หมู่ 6 ซอยสุขุมวิท 71"
-              />
-            </Field>
-          </div>
         </div>
 
         {/* Installation type */}
@@ -447,29 +485,56 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
 
         <div className="mt-6">
           <p className="mb-3 text-sm text-slate-500">
-            คลิกที่ปุ่มกำหนดจุดติดตั้งแล้วคลิกเลือกตำแหน่งที่แผนที่
+            คลิกที่ปุ่มกำหนดจุดติดตั้งแล้วคลิกเลือกตำแหน่งที่แผนที่ หรือกด “ใช้ตำแหน่งปัจจุบัน”
           </p>
           <LocationMap value={point} onChange={setPoint} />
+          {attemptedSubmit && fieldErrors.location && (
+            <p className="mt-2 text-xs text-rose-600">{fieldErrors.location}</p>
+          )}
         </div>
       </section>
 
       {/* Section 3 — Customer type */}
       <section className="rounded-card border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
         <SectionHeading step="3" title="ประเภทผู้ใช้น้ำ" />
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
           {CUSTOMER_TYPE_GROUPS.map((group) => (
-            <div key={group.title}>
-              <p className="mb-3 text-sm font-semibold text-navy-deep">{group.title}</p>
-              <div className="flex flex-col gap-2.5">
-                {group.options.map((opt) => (
-                  <RadioOption
-                    key={opt}
-                    name="customerType"
-                    checked={customerType === opt}
-                    onChange={() => setCustomerType(opt)}
-                    label={opt}
-                  />
-                ))}
+            <div key={group.title} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
+              <span
+                className={`inline-block rounded-pill px-3 py-1 text-xs font-semibold ${group.accent}`}
+              >
+                {group.title}
+              </span>
+              <div className="mt-3 flex flex-col gap-2">
+                {group.options.map((opt) => {
+                  const checked = customerType === opt;
+                  return (
+                    <label
+                      key={opt}
+                      className={`flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
+                        checked
+                          ? "border-navy bg-white font-medium text-navy-deep shadow-field"
+                          : "border-transparent bg-white/60 text-slate-600 hover:border-slate-200 hover:bg-white"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="customerType"
+                        checked={checked}
+                        onChange={() => setCustomerType(opt)}
+                        className="sr-only"
+                      />
+                      <span
+                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
+                          checked ? "border-navy bg-navy" : "border-slate-300 bg-white"
+                        }`}
+                      >
+                        {checked && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                      </span>
+                      {opt}
+                    </label>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -487,51 +552,52 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
       {/* Section 4 — Documents */}
       <section className="rounded-card border border-slate-200 bg-white p-6 shadow-soft sm:p-8">
         <SectionHeading step="4" title="แนบเอกสาร" />
-        <p className="mb-4 text-sm text-slate-500">ติ๊กเลือกว่ามีเอกสารประเภทใดบ้าง</p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {DOCUMENT_CHECKLIST.map((doc) => (
-            <label key={doc} className="flex items-center gap-2.5 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-300 text-navy focus:ring-navy"
-                checked={checkedDocs.includes(doc)}
-                onChange={() => toggleDoc(doc)}
-              />
-              {doc}
-            </label>
-          ))}
-        </div>
+        <p className="mb-4 text-sm text-slate-500">ติ๊กเลือกเอกสารที่มี แล้วแนบไฟล์ของเอกสารนั้นได้ทันที</p>
+        <div className="space-y-3">
+          {DOCUMENT_CHECKLIST.map((doc) => {
+            const checked = checkedDocs.includes(doc);
+            const files = docFiles[doc] ?? [];
+            return (
+              <div
+                key={doc}
+                className={`rounded-xl border px-4 py-3 transition ${
+                  checked ? "border-navy/30 bg-aqua/10" : "border-slate-200 bg-white"
+                }`}
+              >
+                <label className="flex items-center gap-2.5 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300 text-navy focus:ring-navy"
+                    checked={checked}
+                    onChange={() => toggleDoc(doc)}
+                  />
+                  <span className={checked ? "font-medium text-navy-deep" : ""}>{doc}</span>
+                </label>
 
-        <div className="mt-5">
-          <label className="field-label">แนบรูปภาพหรือไฟล์ PDF (อัพโหลดได้หลายไฟล์)</label>
-          <input
-            type="file"
-            multiple
-            accept="image/*,application/pdf"
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              const tooBig = files.find((f) => f.size > MAX_FILE_SIZE);
-              if (tooBig) {
-                setFileError(`ไฟล์ "${tooBig.name}" มีขนาดเกิน 10MB กรุณาเลือกไฟล์ใหม่`);
-                setAttachedFiles([]);
-                e.target.value = "";
-                return;
-              }
-              setFileError("");
-              setAttachedFiles(files);
-            }}
-            className="mt-2 block w-full text-sm text-slate-600 file:mr-4 file:rounded-lg file:border-0 file:bg-aqua/50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-navy-deep hover:file:bg-aqua/70"
-          />
-          <p className="mt-1 text-xs text-slate-400">ไฟล์ละไม่เกิน 10MB</p>
-          {fileError && <p className="mt-1 text-xs text-rose-600">{fileError}</p>}
-          {attachedFiles.length > 0 && (
-            <ul className="mt-2 list-inside list-disc text-xs text-slate-500">
-              {attachedFiles.map((f) => (
-                <li key={f.name}>{f.name}</li>
-              ))}
-            </ul>
-          )}
+                {checked && (
+                  <div className="mt-3 pl-6">
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*,application/pdf"
+                      onChange={(e) => handleDocFiles(doc, e.target.files)}
+                      className="block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-aqua/50 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-navy-deep hover:file:bg-aqua/70"
+                    />
+                    {files.length > 0 && (
+                      <ul className="mt-1.5 list-inside list-disc text-xs text-slate-500">
+                        {files.map((f) => (
+                          <li key={f.name}>{f.name}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
+        <p className="mt-3 text-xs text-slate-400">ไฟล์ละไม่เกิน 10MB</p>
+        {fileError && <p className="mt-1 text-xs text-rose-600">{fileError}</p>}
       </section>
 
       {/* Submit */}
@@ -541,7 +607,7 @@ export function WaterRequestForm({ onClose }: { onClose?: () => void } = {}) {
         )}
         <button
           type="submit"
-          disabled={!isValid || status === "submitting"}
+          disabled={status === "submitting"}
           className="w-full rounded-xl bg-navy px-8 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-navy-deep disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-auto"
         >
           {status === "submitting" ? "กำลังบันทึกข้อมูล…" : "ส่งคำขอใช้น้ำประปา"}
@@ -565,16 +631,19 @@ function SectionHeading({ step, title }: { step: string; title: string }) {
 function Field({
   label,
   required,
+  error,
   children,
 }: {
   label: string;
   required?: boolean;
+  error?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
       <label className={`field-label ${required ? "field-required" : ""}`}>{label}</label>
       {children}
+      {error && <p className="mt-1 text-xs text-rose-600">{error}</p>}
     </div>
   );
 }
